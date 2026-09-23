@@ -56,14 +56,27 @@ def validate_result(new_count, last_known_good_count):
         )
 
 
+def fetch_container_net0(node, vmid):
+    """Fetch one container's net0 string from its per-container config (cluster/resources doesn't include it)."""
+    out = subprocess.run(
+        ["pvesh", "get", f"/nodes/{node}/lxc/{vmid}/config", "--output-format", "json"],
+        capture_output=True, text=True, check=True,
+    )
+    return json.loads(out.stdout).get("net0")
+
+
 def fetch_raw_containers():
-    """Call pvesh locally (root socket access, no API token needed) and return the raw LXC entries."""
+    """Call pvesh locally (root socket access, no API token needed) and return the raw LXC entries,
+    each enriched with net0 from its own config (the cluster-wide resource list omits it)."""
     out = subprocess.run(
         ["pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"],
         capture_output=True, text=True, check=True,
     )
     resources = json.loads(out.stdout)
-    return [r for r in resources if r.get("type") == "lxc"]
+    lxcs = [r for r in resources if r.get("type") == "lxc"]
+    for c in lxcs:
+        c["net0"] = fetch_container_net0(c["node"], c["vmid"])
+    return lxcs
 
 
 def last_known_good_count():

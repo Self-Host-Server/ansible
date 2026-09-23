@@ -8,6 +8,25 @@
         name: python3-yaml
         state: present
 
+    - name: Ensure node1 resolves ansible-host to its LAN address, not its public DNS record
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^\S+\s+ansible-host$'
+        line: "{{ hostvars['ansible-host'].ansible_host }} ansible-host"
+        state: present
+
+    - name: Scan ansible-host's SSH host key
+      ansible.builtin.command: ssh-keyscan -t ed25519 ansible-host
+      register: ansible_host_keyscan
+      changed_when: false
+
+    - name: Trust ansible-host's SSH host key for non-interactive delivery
+      ansible.builtin.known_hosts:
+        name: ansible-host
+        key: "{{ ansible_host_keyscan.stdout }}"
+        path: /root/.ssh/known_hosts
+        state: present
+
     - name: Ensure the regen script directory exists
       ansible.builtin.file:
         path: /usr/local/lib/proxmox-inventory-sync

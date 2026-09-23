@@ -1,0 +1,129 @@
+- name: Bootstrap Proxmox inventory sync on node1
+  hosts: node1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Ensure python3-yaml is present
+      ansible.builtin.apt:
+        name: python3-yaml
+        state: present
+
+    - name: Ensure the regen script directory exists
+      ansible.builtin.file:
+        path: /usr/local/lib/proxmox-inventory-sync
+        state: directory
+        mode: "0755"
+
+    - name: Deploy the regen script
+      ansible.builtin.copy:
+        src: files/proxmox-inventory-sync/regen_inventory.py
+        dest: /usr/local/lib/proxmox-inventory-sync/regen_inventory.py
+        mode: "0755"
+
+    - name: Ensure the telegram credentials directory exists
+      ansible.builtin.file:
+        path: /etc/proxmox-inventory-sync
+        state: directory
+        mode: "0700"
+
+    - name: Deploy Telegram credentials for node1's regen notifications
+      ansible.builtin.copy:
+        dest: /etc/proxmox-inventory-sync/telegram.env
+        content: "TELEGRAM_BOT_TOKEN={{ telegram_bot_token }}\nTELEGRAM_CHAT_ID={{ telegram_chat_id }}\n"
+        mode: "0600"
+      no_log: true
+
+    - name: Generate a dedicated keypair for delivering inventory to ansible-host
+      ansible.builtin.command:
+        cmd: ssh-keygen -t ed25519 -f /root/.ssh/proxmox-inventory-sync_ed25519 -N "" -C proxmox-inventory-sync
+        creates: /root/.ssh/proxmox-inventory-sync_ed25519
+
+    - name: Read back the generated public key
+      ansible.builtin.slurp:
+        src: /root/.ssh/proxmox-inventory-sync_ed25519.pub
+      register: node1_sync_pubkey_raw
+
+    - name: Expose the public key to the ansible-host play
+      ansible.builtin.set_fact:
+        node1_sync_pubkey: "{{ node1_sync_pubkey_raw.content | b64decode | trim }}"
+
+    - name: Deploy the systemd path unit
+      ansible.builtin.copy:
+        src: files/proxmox-inventory-sync/proxmox-inventory-sync.path
+        dest: /etc/systemd/system/proxmox-inventory-sync.path
+        mode: "0644"
+      notify: reload systemd node1
+
+    - name: Deploy the systemd service unit
+      ansible.builtin.copy:
+        src: files/proxmox-inventory-sync/proxmox-inventory-sync.service
+        dest: /etc/systemd/system/proxmox-inventory-sync.service
+        mode: "0644"
+      notify: reload systemd node1
+
+    - name: Enable and start the sync path unit
+      ansible.builtin.systemd:
+        name: proxmox-inventory-sync.path
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: reload systemd node1
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+- name: Bootstrap Proxmox inventory sync on ansible-host
+  hosts: ansible-host
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Ensure the staging directory exists, owner-only
+      ansible.builtin.file:
+        path: /home/nihar/ansible/playbooks/inventory/.staging
+        state: directory
+        mode: "0700"
+
+    - name: Make the receive-staged wrapper script executable
+      ansible.builtin.file:
+        path: /home/nihar/ansible/playbooks/files/proxmox-inventory-sync/receive_staged.sh
+        mode: "0755"
+
+    - name: Authorize node1's key, restricted to the receive-staged wrapper
+      ansible.posix.authorized_key:
+        user: nihar
+        key: "{{ hostvars['node1'].node1_sync_pubkey }}"
+        key_options: >-
+          command="/home/nihar/ansible/playbooks/files/proxmox-inventory-sync/receive_staged.sh",
+          no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
+
+    - name: Deploy the systemd path unit
+      ansible.builtin.copy:
+        src: files/inventory-encrypt-on-receipt/inventory-encrypt-on-receipt.path
+        dest: /etc/systemd/system/inventory-encrypt-on-receipt.path
+        mode: "0644"
+      become: true
+      notify: reload systemd ansible-host
+
+    - name: Deploy the systemd service unit
+      ansible.builtin.copy:
+        src: files/inventory-encrypt-on-receipt/inventory-encrypt-on-receipt.service
+        dest: /etc/systemd/system/inventory-encrypt-on-receipt.service
+        mode: "0644"
+      become: true
+      notify: reload systemd ansible-host
+
+    - name: Enable and start the path units
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      become: true
+      loop:
+        - inventory-encrypt-on-receipt.path
+
+  handlers:
+    - name: reload systemd ansible-host
+      ansible.builtin.systemd:
+        daemon_reload: true
+      become: true

@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for a freshly-staged plaintext inventory file
+
+[Path]
+PathExists=/home/nihar/ansible/playbooks/inventory/.staging/containers-generated.yml.plain
+Unit=inventory-encrypt-on-receipt.service
+
+[Install]
+WantedBy=multi-user.target

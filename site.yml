@@ -24,6 +24,10 @@
   import_playbook: playbooks/bootstrap-nodes.yml
   tags: bootstrap-nodes
 
+- name: Bootstrap Proxmox inventory sync
+  import_playbook: playbooks/inventory-sync-bootstrap.yml
+  tags: inventory-sync-bootstrap
+
 - name: Update Proxmox VE hypervisor hosts
   import_playbook: playbooks/proxmox-update.yml
   tags: proxmox-nodes

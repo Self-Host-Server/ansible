@@ -1,0 +1,17 @@
+# Build / dependency artifacts
+node_modules/
+.tox/
+.venv/
+__pycache__/
+*.pyc
+
+# Ansible runtime artifacts
+*.retry
+update.log
+
+# Pre-encryption backups from the inventory migration (still plaintext)
+*.yml.bak
+
+# Staging area for the Proxmox regen pipeline (plaintext before vault-encrypt)
+playbooks/inventory/.staging/
+.claude

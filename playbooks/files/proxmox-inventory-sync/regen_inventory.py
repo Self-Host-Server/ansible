@@ -54,3 +54,91 @@ def validate_result(new_count, last_known_good_count):
             f"regen produced {new_count} hosts, less than half of last known-good's {last_known_good_count} — "
             "refusing to overwrite, looks like a partial API response"
         )
+
+
+def fetch_raw_containers():
+    """Call pvesh locally (root socket access, no API token needed) and return the raw LXC entries."""
+    out = subprocess.run(
+        ["pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"],
+        capture_output=True, text=True, check=True,
+    )
+    resources = json.loads(out.stdout)
+    return [r for r in resources if r.get("type") == "lxc"]
+
+
+def last_known_good_count():
+    """Host count from node1's local cache of the last successfully-delivered inventory, or 0 if none exists yet."""
+    if not CACHE_PATH.exists():
+        return 0
+    data = yaml.safe_load(CACHE_PATH.read_text())
+    return len(data.get("containers", {}).get("hosts", {})) if data else 0
+
+
+def write_cache(text):
+    """Atomically update node1's local last-known-good cache after a successful regen."""
+    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=CACHE_PATH.parent)
+    os.write(fd, text.encode())
+    os.close(fd)
+    os.replace(tmp, CACHE_PATH)
+
+
+def deliver(text):
+    """Deliver plaintext YAML to ansible-host's staging path via the restricted key, atomically on the receiving end."""
+    fd, tmp = tempfile.mkstemp()
+    os.write(fd, text.encode())
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["scp", "-i", REMOTE_KEY, "-o", "BatchMode=yes", tmp,
+             f"{REMOTE_USER}@{ANSIBLE_HOST}:containers-generated.yml.plain"],
+            check=True, capture_output=True, text=True,
+        )
+    finally:
+        os.unlink(tmp)
+
+
+def notify(text):
+    """Best-effort Telegram notification using credentials deployed to this host by inventory-sync-bootstrap.yml."""
+    if not TELEGRAM_ENV_PATH.exists():
+        return
+    env = dict(line.split("=", 1) for line in TELEGRAM_ENV_PATH.read_text().splitlines() if "=" in line)
+    token, chat_id = env.get("TELEGRAM_BOT_TOKEN"), env.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
+    subprocess.run(
+        ["curl", "-s", "-X", "POST", f"https://api.telegram.org/bot{token}/sendMessage",
+         "--data-urlencode", f"chat_id={chat_id}", "--data-urlencode", f"text={text}"],
+        capture_output=True,
+    )
+
+
+def main():
+    try:
+        raw = fetch_raw_containers()
+        hosts, skipped, warnings = build_inventory(raw)
+        validate_result(len(hosts), last_known_good_count())
+    except Exception as e:
+        notify(f"proxmox-inventory-sync FAILED on node1: {e}")
+        print(f"FAILED: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    text = render_yaml(hosts)
+    write_cache(text)
+
+    try:
+        deliver(text)
+    except subprocess.CalledProcessError as e:
+        notify(f"proxmox-inventory-sync: regen OK ({len(hosts)} hosts) but delivery to ansible-host FAILED: {e}")
+        sys.exit(1)
+
+    msg = f"proxmox-inventory-sync: {len(hosts)} hosts delivered"
+    if skipped:
+        msg += f" ({len(skipped)} skipped: {', '.join(skipped)})"
+    notify(msg)
+    for w in warnings:
+        print(w, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

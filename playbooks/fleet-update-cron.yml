@@ -1,0 +1,28 @@
+- name: Recurring fleet-wide container update (control node)
+  hosts: ansible-host
+  gather_facts: false
+  tasks:
+    # Includes nextcloud: its docker-compose.yml only manages the mastercontainer
+    # itself (restart: always), not the AIO app containers — those stay covered by
+    # the separate AIO-specific cron in nextcloud-updates.yml. No overlap between
+    # the two; this just keeps the mastercontainer image current too.
+    - name: "Cron: recurring fleet-wide container update"
+      ansible.builtin.cron:
+        name: "Fleet: routine container update (apt + docker-compose + snapshot)"
+        weekday: "0,3"
+        hour: "2"
+        minute: "0"
+        job: >-
+          cd /home/nihar/ansible && ./run-update.sh site.yml --tags containers
+          >> /home/nihar/.ansible/fleet-update-cron.log 2>&1
+
+    - name: "Cron: recurring gaming laptop update"
+      ansible.builtin.cron:
+        name: "Fleet: routine gaming laptop update (apt + docker-compose)"
+        weekday: "0,3"
+        hour: "1"
+        minute: "0"
+        job: >-
+          cd /home/nihar/ansible && ./run-update.sh site.yml --tags laptop
+          >> /home/nihar/.ansible/laptop-update-cron.log 2>&1
+        user: nihar

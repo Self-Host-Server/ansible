@@ -1,0 +1,112 @@
+# =============================================================================
+# TOX — Test & task runner
+# =============================================================================
+
+# Default envs run when you type `tox` with no arguments
+[tool.tox]
+env_list = [
+  "lint",
+  "txt-lint",
+  "format",
+  "prettier",
+  "toml-lint",
+  "duplicate-code",
+]
+work_dir = "/tmp/.tox"
+
+# Shared base config inherited by all envs
+[tool.tox.env_run_base]
+# GH_TOKEN/GITHUB_TOKEN: needed by the zizmor env, and must be listed here
+# (not just on that env) so it survives nested `tox -e X` calls (docker ->
+# zizmor, all -> docker -> zizmor) — each level only inherits what the level
+# above already had in pass_env, it doesn't re-consult the original shell env.
+set_env = { VIRTUALENV_OVERRIDE_APP_DATA = "{work_dir}/.virtualenv", PRETTIER_GLOB = "**/*.{scss,js,html,json,yml,yaml,md}" }
+
+# --- Formatting -------------------------------------------------------------
+
+[tool.tox.env.format]
+skip_install = true
+deps = ["ty"]
+allowlist_externals = ["npx"]
+commands = [
+  [
+    "npx",
+    "prettier",
+    "--write",
+    "--log-level",
+    "log",
+    "{env:PRETTIER_GLOB}",
+  ],
+  [
+    "npx",
+    "@taplo/cli",
+    "fmt",
+    "--no-auto-config",
+    "**/*.toml",
+  ],
+]
+
+[tool.tox.env.prettier]
+skip_install = true
+allowlist_externals = ["npx"]
+commands = [["npx", "prettier", "--check", "{env:PRETTIER_GLOB}"]]
+
+[tool.tox.env."toml-lint"]
+skip_install = true
+allowlist_externals = ["npx"]
+commands = [
+  [
+    "npx",
+    "@taplo/cli",
+    "fmt",
+    "--check",
+    "--no-auto-config",
+    "**/*.toml",
+  ],
+  [
+    "npx",
+    "@taplo/cli",
+    "lint",
+    "--no-auto-config",
+    "**/*.toml",
+  ],
+]
+
+# --- Aggregate (CI) ---------------------------------------------------------
+
+# Runs the full CI chain: no-classes-check → lint → txt-lint → prettier → tests
+[tool.tox.env.github]
+skip_install = true
+deps = []
+allowlist_externals = ["tox"]
+commands = [
+
+  [
+    "tox",
+    "-e",
+    "lint",
+  ],
+  [
+    "tox",
+    "-e",
+    "txt-lint",
+  ],
+  [
+    "tox",
+    "-e",
+    "prettier",
+  ],
+  [
+    "tox",
+    "-e",
+    "toml-lint",
+  ],
+]
+
+
+# Runs format then the full github chain
+[tool.tox.env.all]
+skip_install = true
+deps = []
+allowlist_externals = ["tox"]
+commands = [["tox", "-e", "format"], ["tox", "-e", "github"]]

@@ -1,0 +1,179 @@
+- name: Rotating snapshot, then update apt and Docker
+  hosts: containers:selfhost
+  serial: 1
+  become: true
+  gather_facts: false
+  vars:
+    snapshot_total: 5
+    snapshot_state_dir: "{{ lookup('env', 'HOME') }}/.ansible/proxmox-snapshots"
+    snapshot_date: "{{ '%Y-%m-%d' | strftime }}"
+
+  tasks:
+    - name: Rotating snapshot
+      tags: [snapshot]
+      block:
+        - name: Ensure snapshot state directory exists
+          ansible.builtin.file:
+            path: "{{ snapshot_state_dir }}"
+            state: directory
+            mode: "0755"
+          delegate_to: localhost
+
+        - name: Initialize snapshot index if absent
+          ansible.builtin.copy:
+            dest: "{{ snapshot_state_dir }}/ct{{ vmid }}_index"
+            content: "1\n"
+            force: false
+            mode: "0644"
+          delegate_to: localhost
+
+        - name: Read snapshot index
+          ansible.builtin.slurp:
+            src: "{{ snapshot_state_dir }}/ct{{ vmid }}_index"
+          register: snap_index_raw
+          delegate_to: localhost
+
+        - name: Set snapshot name
+          ansible.builtin.set_fact:
+            snap_index: "{{ snap_index_raw.content | b64decode | trim | int }}"
+            snap_name: "snapshot_{{ snap_index_raw.content | b64decode | trim | int }}"
+
+        - name: Remove old snapshot in this slot (if present)
+          community.general.proxmox_snap:
+            api_host: "{{ proxmox_api_host }}"
+            api_user: "{{ proxmox_api_user }}"
+            api_token_id: "{{ proxmox_token_id }}"
+            api_token_secret: "{{ proxmox_token_secret }}"
+            vmid: "{{ vmid }}"
+            snapname: "{{ snap_name }}"
+            state: absent
+            force: true
+            timeout: 300
+          delegate_to: localhost
+
+        - name: Create snapshot
+          community.general.proxmox_snap:
+            api_host: "{{ proxmox_api_host }}"
+            api_user: "{{ proxmox_api_user }}"
+            api_token_id: "{{ proxmox_token_id }}"
+            api_token_secret: "{{ proxmox_token_secret }}"
+            vmid: "{{ vmid }}"
+            snapname: "{{ snap_name }}"
+            description: "Before update on {{ snapshot_date }}"
+            state: present
+            timeout: 300
+          delegate_to: localhost
+
+        - name: Advance snapshot index
+          ansible.builtin.copy:
+            dest: "{{ snapshot_state_dir }}/ct{{ vmid }}_index"
+            content: "{{ (snap_index | int % snapshot_total) + 1 }}\n"
+            mode: "0644"
+          delegate_to: localhost
+
+    - name: Update and upgrade apt packages
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        autoremove: true
+        autoclean: true
+
+    # Reboot BEFORE touching docker/GPU-dependent stacks, not after: if apt
+    # just upgraded a kernel or GPU driver, the running kernel module is
+    # stale relative to the new userspace libraries until reboot, and any
+    # GPU-dependent container fails to start (e.g. "could not select device
+    # driver nvidia") until that's resolved. Confirmed via a real failure on
+    # the gaming laptop's ollama stack after the old order upgraded its
+    # NVIDIA driver mid-run.
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_flag
+
+    - name: Reboot if required
+      ansible.builtin.reboot:
+        msg: "Rebooting due to package updates (Ansible)"
+        reboot_timeout: 300
+        pre_reboot_delay: 5
+        post_reboot_delay: 30
+      when:
+        - reboot_flag.stat.exists
+        - auto_reboot | default(false) | bool
+        - ansible_connection != 'local'
+
+    - name: Schedule self-reboot (detached)
+      ansible.builtin.shell: sleep 5 && shutdown -r now
+      async: 1
+      poll: 0
+      when:
+        - reboot_flag.stat.exists
+        - auto_reboot | default(false) | bool
+        - ansible_connection == 'local'
+
+    - name: Report reboot needed (manual)
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} needs a reboot — auto_reboot not enabled for this host"
+      when:
+        - reboot_flag.stat.exists
+        - not (auto_reboot | default(false) | bool) or ansible_connection == 'local'
+
+    - name: Ensure Python Docker/requests libraries are present
+      ansible.builtin.apt:
+        name:
+          - python3-requests
+          - python3-docker
+        state: present
+
+    - name: Find docker compose files
+      ansible.builtin.find:
+        paths: /opt/docker-compose
+        patterns: "compose.yaml,compose.yml,docker-compose.yaml,docker-compose.yml"
+        recurse: true
+      register: compose_files
+      when: update_method | default('compose') == 'compose'
+
+    - name: Check which compose directories are git repos
+      ansible.builtin.stat:
+        path: "{{ item }}/.git"
+      loop: "{{ compose_files.files | map(attribute='path') | map('dirname') | unique | list }}"
+      register: compose_git_check
+      when: update_method | default('compose') == 'compose'
+
+    - name: Pull latest changes for git-managed compose directories
+      ansible.builtin.command:
+        cmd: git pull
+        chdir: "{{ item.item }}"
+      loop: "{{ compose_git_check.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when:
+        - update_method | default('compose') == 'compose'
+        - item.stat.exists | default(false)
+      become: false
+      register: compose_git_pull
+      changed_when: "'Already up to date' not in compose_git_pull.stdout"
+
+    - name: Pull new images and restart stacks
+      community.docker.docker_compose_v2:
+        project_src: "{{ item }}"
+        profiles: "{{ ['prod'] if '/prod/' in item else (['dev'] if '/dev/' in item else omit) }}"
+        pull: always
+        state: present
+      loop: "{{ compose_files.files | map(attribute='path') | map('dirname') | unique | list }}"
+      when: update_method | default('compose') == 'compose'
+
+    - name: Run make update
+      ansible.builtin.command:
+        cmd: make update
+        chdir: "{{ makefile_dir }}"
+      become: false
+      when: update_method | default('compose') == 'makefile'
+      changed_when: true
+
+    - name: Prune dangling images
+      community.docker.docker_prune:
+        images: true
+      register: prune_result
+      retries: 3
+      delay: 15
+      until: prune_result is succeeded

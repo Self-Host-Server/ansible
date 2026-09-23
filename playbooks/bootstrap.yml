@@ -1,0 +1,234 @@
+- name: Bootstrap new hosts (SSH key + passwordless sudo)
+  hosts: containers:selfhost:laptops
+  gather_facts: false
+
+  pre_tasks:
+    - name: Ensure control node has an SSH keypair
+      ansible.builtin.command:
+        cmd: ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+        creates: ~/.ssh/id_ed25519
+      delegate_to: localhost
+      run_once: true
+
+    - name: Check if host key is already known
+      ansible.builtin.shell: "ssh-keygen -F {{ ansible_host }}"
+      delegate_to: localhost
+      register: known_host_check
+      failed_when: false
+      changed_when: false
+
+    - name: Accept and store this host's SSH key
+      ansible.builtin.shell: "ssh-keyscan -H {{ ansible_host }} >> ~/.ssh/known_hosts"
+      delegate_to: localhost
+      when: known_host_check.rc != 0
+
+  tasks:
+    - name: Ensure control node's public key is authorized
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+
+    - name: Grant nihar passwordless sudo
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/nihar-ansible
+        content: "nihar ALL=(ALL) NOPASSWD: ALL\n"
+        mode: "0440"
+        validate: "visudo -cf %s"
+      become: true
+
+    - name: Set timezone to US Eastern
+      community.general.timezone:
+        name: America/New_York
+      become: true
+
+    - name: Ensure fish shell is installed
+      ansible.builtin.apt:
+        name: fish
+        state: present
+        update_cache: true
+      become: true
+
+    - name: Ensure fish is the default shell for nihar
+      ansible.builtin.user:
+        name: nihar
+        shell: /usr/bin/fish
+      become: true
+
+    - name: Download upterm client binary
+      ansible.builtin.unarchive:
+        src: https://github.com/owenthereal/upterm/releases/download/v0.25.1/upterm_linux_amd64.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include:
+          - upterm
+        mode: "0755"
+      become: true
+
+    - name: Ensure upterm config directory exists for nihar
+      ansible.builtin.file:
+        path: /home/nihar/.config/upterm
+        state: directory
+        owner: nihar
+        mode: "0755"
+
+    - name: Point upterm at the self-hosted uptermd relay by default
+      ansible.builtin.copy:
+        dest: /home/nihar/.config/upterm/config.yaml
+        content: |
+          server: ssh://upterm.gavva.dev:2222
+        owner: nihar
+        mode: "0644"
+
+    # The installer can report a spurious curl exit 23 (broken pipe) under
+    # Ansible's non-TTY shell even when the install actually succeeds — seen
+    # on claude, where it failed here but the binary was present and working.
+    # `creates` skips this entirely on hosts that already have it; for a real
+    # install attempt, verify the binary landed rather than trusting curl's
+    # exit code either way.
+    - name: Install Claude Code CLI
+      ansible.builtin.shell: curl -fsSL https://claude.ai/install.sh | bash
+      args:
+        creates: /home/nihar/.local/bin/claude
+      register: claude_cli_install
+      failed_when: false
+
+    - name: Verify Claude Code CLI is actually present
+      ansible.builtin.stat:
+        path: /home/nihar/.local/bin/claude
+      register: claude_cli_check
+
+    - name: Fail if Claude Code CLI did not actually install
+      ansible.builtin.fail:
+        msg: >-
+          Claude Code CLI install failed — /home/nihar/.local/bin/claude is missing
+          (installer exit code: {{ claude_cli_install.rc | default('skipped') }}).
+      when: not claude_cli_check.stat.exists
+
+    - name: Add NodeSource APT repository for Node.js 22.x (OmniRoute client)
+      ansible.builtin.shell: curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+      become: true
+      when: omniroute_client | default(false)
+
+    - name: Ensure Node.js 22.x/npm are installed (OmniRoute client)
+      ansible.builtin.apt:
+        name: nodejs
+        state: latest
+        update_cache: true
+      become: true
+      when: omniroute_client | default(false)
+
+    - name: Install OmniRoute client CLI
+      community.general.npm:
+        name: omniroute
+        global: true
+        state: present
+      become: true
+      when: omniroute_client | default(false)
+
+    - name: Ensure OmniRoute config directory exists for nihar
+      ansible.builtin.file:
+        path: /home/nihar/.config/omniroute
+        state: directory
+        owner: nihar
+        mode: "0700"
+      when: omniroute_client | default(false)
+
+    - name: Write OmniRoute API key to local env file
+      ansible.builtin.copy:
+        dest: /home/nihar/.config/omniroute/.env
+        content: "OMNIROUTE_API_KEY={{ omniroute_api_key }}\n"
+        owner: nihar
+        mode: "0600"
+      become: true
+      when: omniroute_client | default(false)
+      no_log: true
+
+    - name: Check if this machine already has an OmniRoute client context
+      ansible.builtin.stat:
+        path: /home/nihar/.omniroute/config.json
+      register: omniroute_context_file
+      when: omniroute_client | default(false)
+
+    # Not revoked/cleaned up automatically: if the config.json guard above ever
+    # misfires (e.g. the file is deleted without disconnecting), a rerun mints
+    # another read-scoped token rather than reusing one. Low blast radius
+    # (read-only), but worth a periodic glance at `omniroute tokens list` on
+    # the server for stale entries.
+    - name: Mint a scoped OmniRoute access token for this machine
+      ansible.builtin.uri:
+        url: "http://{{ hostvars['omniroute']['ansible_host'] }}:20128/api/cli/tokens"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ omniroute_admin_token }}"
+        body_format: json
+        body:
+          name: "{{ inventory_hostname }}"
+          scope: read
+        status_code: 200
+      register: omniroute_minted_token
+      no_log: true
+      ignore_errors: true
+      when:
+        - omniroute_client | default(false)
+        - not omniroute_context_file.stat.exists
+
+    - name: Connect this machine to the OmniRoute gateway
+      ansible.builtin.command: >
+        omniroute connect http://{{ hostvars['omniroute']['ansible_host'] }}:20128
+        --key {{ omniroute_minted_token.json.token }} --name {{ inventory_hostname }}
+      become: false
+      no_log: true
+      ignore_errors: true
+      when:
+        - omniroute_client | default(false)
+        - not omniroute_context_file.stat.exists
+        - omniroute_minted_token is succeeded
+
+    # setup-claude does NOT use the active `connect` context — it has its own
+    # separate auth, and that key is the routing/inference key
+    # (omniroute_api_key), not the CLI access token connect uses. Confirmed by
+    # testing: defaulting to no flags tries localhost and fails outright.
+    # Also: pass the key via OMNIROUTE_API_KEY env, NOT --api-key — the flag
+    # is silently broken in v3.8.50 (key ends up empty, no auth header sent,
+    # 401), verified by testing both paths with an identical key directly on
+    # claude; the env var path works correctly.
+    - name: Configure Claude Code profiles via OmniRoute (setup-claude)
+      ansible.builtin.command: >
+        omniroute setup-claude --remote http://{{ hostvars['omniroute']['ansible_host'] }}:20128
+      environment:
+        OMNIROUTE_API_KEY: "{{ omniroute_api_key }}"
+      become: false
+      no_log: true
+      changed_when: true
+      ignore_errors: true
+      when:
+        - omniroute_client | default(false)
+        - omniroute_context_file.stat.exists or (omniroute_minted_token is succeeded and omniroute_minted_token.json.token is defined)
+
+    - name: Warn if OmniRoute client setup failed for this machine
+      ansible.builtin.debug:
+        msg: >-
+          Could not automatically connect this machine to the OmniRoute gateway
+          (likely no network path to {{ hostvars['omniroute']['ansible_host'] }}:20128 —
+          not every omniroute_client host is guaranteed LAN/VPN reach). The rest of
+          bootstrap still completed; connect this machine manually once it can reach
+          the gateway.
+      when:
+        - omniroute_client | default(false)
+        - not omniroute_context_file.stat.exists
+        - (omniroute_minted_token is failed) or (omniroute_minted_token is succeeded and omniroute_minted_token.json.token is not defined)
+
+    - name: Remind about remaining manual OmniRoute setup
+      ansible.builtin.debug:
+        msg: >-
+          OmniRoute client connected and Claude Code profiles configured automatically. The only
+          remaining step, deliberately left manual: omniroute launch --profile <name> — run this
+          per session whenever you actually want that Claude Code invocation routed through the
+          gateway. Routing stays opt-in per invocation by design, not something bootstrap should
+          silently turn on.
+      when:
+        - omniroute_client | default(false)
+        - omniroute_context_file.stat.exists or (omniroute_minted_token is succeeded and omniroute_minted_token.json.token is defined)

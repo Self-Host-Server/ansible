@@ -1,0 +1,29 @@
+# site.yml (at ~/ansible/site.yml)
+---
+- name: Update Proxmox containers and ansible host
+  import_playbook: playbooks/update.yml
+  tags: containers
+
+- name: Update gaming laptop
+  import_playbook: playbooks/laptop-update.yml
+  tags: laptop
+
+- name: Setup
+  import_playbook: playbooks/bootstrap.yml
+  tags: setup
+
+- name: Nextcloud AIO automatic update cron
+  import_playbook: playbooks/nextcloud-updates.yml
+  tags: nextcloud-automation
+
+- name: Fleet-wide routine container update cron
+  import_playbook: playbooks/fleet-update-cron.yml
+  tags: fleet-update-cron
+
+- name: Bootstrap Proxmox VE hosts
+  import_playbook: playbooks/bootstrap-nodes.yml
+  tags: bootstrap-nodes
+
+- name: Update Proxmox VE hypervisor hosts
+  import_playbook: playbooks/proxmox-update.yml
+  tags: proxmox-nodes

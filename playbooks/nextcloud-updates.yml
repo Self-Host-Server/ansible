@@ -1,0 +1,35 @@
+- name: Nextcloud AIO automatic updates (docker exec stop/update)
+  hosts: nextcloud
+  gather_facts: false
+  become: true
+  tasks:
+    - name: "Cron: stop Nextcloud AIO containers before update"
+      ansible.builtin.cron:
+        name: "Nextcloud AIO: stop containers before update"
+        weekday: "0,3"
+        hour: "4"
+        minute: "0"
+        job: "docker exec --env STOP_CONTAINERS=1 nextcloud-aio-mastercontainer /daily-backup.sh"
+        user: root
+
+    - name: "Cron: update Nextcloud AIO containers"
+      ansible.builtin.cron:
+        name: "Nextcloud AIO: update and restart containers"
+        weekday: "0,3"
+        hour: "5"
+        minute: "0"
+        job: "docker exec --env AUTOMATIC_UPDATES=1 nextcloud-aio-mastercontainer /daily-backup.sh"
+        user: root
+
+- name: Nextcloud CT recurring Proxmox snapshot (control node)
+  hosts: ansible-host
+  gather_facts: false
+  tasks:
+    - name: "Cron: recurring Proxmox snapshot for Nextcloud CT"
+      ansible.builtin.cron:
+        name: "Nextcloud CT: recurring Proxmox snapshot"
+        weekday: "0,3"
+        hour: "3"
+        minute: "30"
+        job: "cd /home/nihar/ansible && ./run-update.sh playbooks/update.yml --limit nextcloud --tags snapshot >> /home/nihar/.ansible/nextcloud-snapshot-cron.log 2>&1"
+        user: nihar

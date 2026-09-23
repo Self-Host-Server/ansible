@@ -1,0 +1,31 @@
+# Updates the Proxmox VE hypervisor hosts themselves (node1/node2) — NOT the
+# LXC containers running on them (that's playbooks/update.yml).
+#
+# Deliberately no auto-reboot here, unlike the container update flow: a
+# hypervisor reboot takes down every container it hosts at once, so that has
+# to stay a manual, deliberate action — this only reports whether one is
+# needed after the update.
+- name: Update Proxmox VE host packages
+  hosts: proxmox_nodes
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Update and upgrade apt packages on Proxmox host
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        autoremove: true
+        autoclean: true
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_flag
+
+    - name: Report reboot needed (manual)
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} needs a reboot after this update. This is the
+          hypervisor itself — reboot it manually and deliberately (not via this
+          playbook), since it takes down every container/VM it hosts at once.
+      when: reboot_flag.stat.exists

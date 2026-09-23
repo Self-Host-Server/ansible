@@ -1,0 +1,34 @@
+# Bootstraps SSH key access for the Proxmox VE hosts themselves (node1/node2).
+# Deliberately separate from playbooks/bootstrap.yml, which sets up a `nihar`
+# user, passwordless sudo, fish, upterm, etc. — none of that applies here,
+# these hosts are accessed directly as root and need nothing but key auth.
+- name: Bootstrap Proxmox VE hosts (SSH key access for root)
+  hosts: proxmox_nodes
+  gather_facts: false
+
+  pre_tasks:
+    - name: Ensure control node has an SSH keypair
+      ansible.builtin.command:
+        cmd: ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+        creates: ~/.ssh/id_ed25519
+      delegate_to: localhost
+      run_once: true
+
+    - name: Check if host key is already known
+      ansible.builtin.shell: "ssh-keygen -F {{ ansible_host }}"
+      delegate_to: localhost
+      register: known_host_check
+      failed_when: false
+      changed_when: false
+
+    - name: Accept and store this host's SSH key
+      ansible.builtin.shell: "ssh-keyscan -H {{ ansible_host }} >> ~/.ssh/known_hosts"
+      delegate_to: localhost
+      when: known_host_check.rc != 0
+
+  tasks:
+    - name: Ensure control node's public key is authorized for root
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"

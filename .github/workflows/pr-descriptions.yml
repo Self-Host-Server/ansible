@@ -1,0 +1,338 @@
+name: Auto PR Description
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  generate-description:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      issues: write
+      repository-projects: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Gather PR context
+        run: |
+          git log "origin/${GITHUB_BASE_REF}...HEAD" --format="%s" --no-merges > /tmp/commits.txt || true
+
+          # Prefer the newest commit with a real conventional-commit type, since that
+          # yields the most descriptive PR title. Without this, a generic subject line
+          # (e.g. "Dev", "wip") that happens to be the newest commit would win just for
+          # being newest, producing junk PR titles that flow straight into release notes.
+          grep -iE "^(feat|fix|docs|refactor|perf|test)(\([^)]+\))?!?: " /tmp/commits.txt | head -1 \
+            > /tmp/first_subject.txt || true
+
+          # Fall back to the newest commit that isn't a maintenance-type prefix.
+          [ -s /tmp/first_subject.txt ] || \
+            grep -vE "^(chore|lint|style|ci|build)\b" /tmp/commits.txt | head -1 \
+            > /tmp/first_subject.txt || true
+
+          # Last resort: newest commit, whatever it says.
+          [ -s /tmp/first_subject.txt ] || head -1 /tmp/commits.txt > /tmp/first_subject.txt || true
+
+          git diff "origin/${GITHUB_BASE_REF}...HEAD" --stat > /tmp/diff_stat.txt || true
+          git diff "origin/${GITHUB_BASE_REF}...HEAD" | head -c 51200 > /tmp/diff.txt || true
+
+      - name: Assign PR author and code owners
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_PULL_REQUEST_USER_LOGIN: ${{ github.event.pull_request.user.login }}
+        run: |
+          python3 - <<'EOF'
+          import subprocess, os, fnmatch
+
+          pr_author = os.environ["GITHUB_EVENT_PULL_REQUEST_USER_LOGIN"]
+          base_ref = "origin/" + os.environ["GITHUB_BASE_REF"]
+
+          changed = subprocess.run(
+              ["git", "diff", f"{base_ref}...HEAD", "--name-only"],
+              capture_output=True, text=True
+          ).stdout.splitlines()
+
+          def codeowners_match(pattern, filepath):
+              p = pattern.lstrip("/")
+              if p == "*":
+                  return True
+              if "/" not in p:
+                  return fnmatch.fnmatch(os.path.basename(filepath), p)
+              return fnmatch.fnmatch(filepath, p) or fnmatch.fnmatch(filepath, p.rstrip("/") + "/*")
+
+          code_owners = set()
+          for path in ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"]:
+              if os.path.exists(path):
+                  rules = []
+                  for line in open(path):
+                      line = line.strip()
+                      if not line or line.startswith("#"):
+                          continue
+                      parts = line.split()
+                      if len(parts) >= 2:
+                          rules.append((parts[0], [o.lstrip("@") for o in parts[1:] if o.startswith("@")]))
+                  for f in changed:
+                      matched = []
+                      for pattern, owners in rules:
+                          if codeowners_match(pattern, f):
+                              matched = owners
+                      code_owners.update(matched)
+                  break
+
+          assignees = list(code_owners | {pr_author})
+          for assignee in assignees:
+              result = subprocess.run(
+                  ["gh", "pr", "edit", "${{ github.event.pull_request.number }}",
+                   "--add-assignee", assignee],
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode == 0:
+                  print(f"Assigned: {assignee}")
+              elif "replaceActorsForAssignable" in result.stderr or "Assigning agents is not supported" in result.stderr:
+                  print(f"Skipped {assignee} (bot/app accounts cannot be assigned)")
+              else:
+                  print(result.stderr[:200])
+                  raise SystemExit(result.returncode)
+          EOF
+
+      - name: Add PR to project
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_EVENT_PULL_REQUEST_NODE_ID: ${{ github.event.pull_request.node_id }}
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, json, sys, os
+
+          def gql(query, **variables):
+              args = ["gh", "api", "graphql", "-f", f"query={query}"]
+              for k, v in variables.items():
+                  # -F type-infers (numbers/bools stay typed); -f always sends a string.
+                  # GraphQL Int!/Boolean! variables need -F or gh rejects them as invalid.
+                  flag = "-F" if str(v).lstrip("-").isdigit() else "-f"
+                  args += [flag, f"{k}={v}"]
+              r = subprocess.run(args, capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(r.stderr[:300], file=sys.stderr)
+                  raise SystemExit(1)
+              return json.loads(r.stdout)
+
+          owner      = "${{ github.repository_owner }}"
+          pr_node_id = os.environ["GITHUB_EVENT_PULL_REQUEST_NODE_ID"]
+
+          # Resolve project node ID from the known project number
+          # https://github.com/orgs/atlas-smart-ims/projects/4
+          data = gql("""
+            query($owner: String!, $number: Int!) {
+              organization(login: $owner) {
+                projectV2(number: $number) { id title }
+              }
+            }
+          """, owner=owner, number="4")
+
+          project = data["data"]["organization"]["projectV2"]
+          project_id = project["id"]
+          print(f"Project: {project['title']}")
+
+          # Add PR to the project
+          data = gql("""
+            mutation($pid: ID!, $cid: ID!) {
+              addProjectV2ItemById(input: {projectId: $pid, contentId: $cid}) {
+                item { id }
+              }
+            }
+          """, pid=project_id, cid=pr_node_id)
+          item_id = data["data"]["addProjectV2ItemById"]["item"]["id"]
+
+          # Find the Status field and pick the best option
+          data = gql("""
+            query($pid: ID!) {
+              node(id: $pid) {
+                ... on ProjectV2 {
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField { id name options { id name } }
+                    }
+                  }
+                }
+              }
+            }
+          """, pid=project_id)
+
+          PREFERRED = ["in review", "ready for review", "in progress", "todo", "backlog"]
+          status_field = best_option = None
+          for field in data["data"]["node"]["fields"]["nodes"]:
+              if field.get("name", "").lower() == "status":
+                  status_field = field
+                  opts = {o["name"].lower(): o for o in field.get("options", [])}
+                  best_option = next((opts[p] for p in PREFERRED if p in opts), None)
+                  if not best_option and field["options"]:
+                      best_option = field["options"][0]
+                  break
+
+          if not status_field or not best_option:
+              print("No status field found — item added without status")
+              raise SystemExit(0)
+
+          gql("""
+            mutation($pid: ID!, $iid: ID!, $fid: ID!, $oid: String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $pid, itemId: $iid, fieldId: $fid,
+                value: { singleSelectOptionId: $oid }
+              }) { projectV2Item { id } }
+            }
+          """, pid=project_id, iid=item_id, fid=status_field["id"], oid=best_option["id"])
+
+          print(f"Status → {best_option['name']}")
+          PYEOF
+
+      - name: Apply labels
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'EOF'
+          import subprocess, re, os
+
+          pr_number = "${{ github.event.pull_request.number }}"
+          base_ref = "origin/" + os.environ["GITHUB_BASE_REF"]
+
+          changed = subprocess.run(
+              ["git", "diff", f"{base_ref}...HEAD", "--name-only"],
+              capture_output=True, text=True,
+          ).stdout.splitlines()
+
+          # Area labels from changed file paths
+          area_labels = set()
+          for f in changed:
+              if f.startswith("android/"):
+                  area_labels.add("android")
+              elif f.startswith(("static/", "templates/", "package.json", "package-lock.json")):
+                  area_labels.add("frontend")
+              elif f in ("app.py", "personality.py") or f.startswith("requirements"):
+                  area_labels.add("backend")
+              elif f.startswith(".github/"):
+                  area_labels.add("ci")
+              elif f in ("Dockerfile", "compose.yml", "tox.ini", "environment.yml", "Makefile") or f.endswith(".toml"):
+                  area_labels.add("devops")
+
+          # Type labels from conventional commit prefixes
+          type_map = {
+              "feat": "enhancement",
+              "fix": "bug",
+              "docs": "documentation",
+              "chore": "chore",
+              "refactor": "refactor",
+              "perf": "performance",
+          }
+          type_labels = set()
+          for line in open("/tmp/commits.txt").read().splitlines():
+              m = re.match(r"^([a-z]+)(\([^)]+\))?[!]?:", line)
+              if m and m.group(1) in type_map:
+                  type_labels.add(type_map[m.group(1)])
+
+          all_labels = area_labels | type_labels
+          if not all_labels:
+              print("No labels detected")
+              raise SystemExit(0)
+
+          # Ensure labels exist; create with standard colours if missing
+          label_meta = {
+              "android":       ("0075ca", "Android companion app"),
+              "frontend":      ("0e8a16", "UI / JS / CSS"),
+              "backend":       ("e4e669", "Python server and API"),
+              "devops":        ("d93f0b", "Docker / CI / infra"),
+              "ci":            ("f9d0c4", "GitHub Actions"),
+              "enhancement":   ("a2eeef", "New feature or request"),
+              "bug":           ("d73a4a", "Something isn't working"),
+              "documentation": ("0075ca", "Documentation improvements"),
+              "chore":         ("cfd3d7", "Maintenance"),
+              "refactor":      ("e4e669", "Code refactoring"),
+              "performance":   ("fbca04", "Performance improvement"),
+          }
+          for label in all_labels:
+              if label in label_meta:
+                  color, desc = label_meta[label]
+                  subprocess.run(
+                      ["gh", "label", "create", label,
+                       "--color", color, "--description", desc, "--force"],
+                      capture_output=True,
+                  )
+
+          subprocess.run(
+              ["gh", "pr", "edit", pr_number,
+               "--add-label", ",".join(all_labels)],
+              check=True,
+          )
+          print(f"Labels applied: {', '.join(sorted(all_labels))}")
+          EOF
+
+      # Method 1: git-cliff (Conventional Commits)
+      - name: Install git-cliff
+        id: install-cliff-1
+        continue-on-error: true
+        uses: $/.github/actions/install-git-cliff
+
+      - name: "[1] git-cliff"
+        id: gitcliff
+        continue-on-error: true
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          CLIFF: ${{ steps.install-cliff-1.outputs.cliff-path }}
+        run: |
+          if [ -z "$CLIFF" ] || [ ! -x "$CLIFF" ]; then
+            echo "git-cliff install failed"
+            exit 1
+          fi
+
+          "$CLIFF" --config pyproject.toml "origin/${GITHUB_BASE_REF}..HEAD" \
+            > /tmp/pr_body.txt 2>/tmp/cliff_err.txt
+
+          # pyproject.toml's git-cliff config has a catch-all parser (".*" -> "📝 Changes"),
+          # so every commit lands in *some* group and "^### " always matches, even when none
+          # of the commits actually used a conventional-commit prefix. Only treat this method
+          # as successful when a *typed* category (not just the catch-all) is present, so
+          # untyped commit histories fall through to the better title-generation fallbacks.
+          grep "^### " /tmp/pr_body.txt | grep -qv "📝 Changes" \
+            || { echo "No conventional commits found"; exit 1; }
+
+          python3 - <<'EOF'
+          import re, sys, os
+          raw = open("/tmp/first_subject.txt").read().strip() or os.environ.get("HEAD_REF", "")
+          clean = re.sub(r'^[a-z]+(\([^)]+\))?: ', '', raw)
+          title = (clean[0].upper() + clean[1:])[:70] if clean else raw[:70]
+          open("/tmp/pr_title.txt", "w").write(title)
+          EOF
+
+      # Method 2: Template from commit messages
+      - name: "[2] Commit-message template"
+        id: template
+        if: steps.gitcliff.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          python3 .github/scripts/gen_template.py
+
+      # Method 3: Nudge user toward GitHub Copilot
+      - name: "[3] Suggest GitHub Copilot"
+        if: steps.gitcliff.outcome == 'failure' && steps.template.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body \
+            "All automatic description methods failed. If your repo has GitHub Copilot enabled, use the Generate description button in the PR editor, or fill it in manually."
+
+      # Apply result
+      - name: Update PR
+        if: steps.gitcliff.outcome == 'success' || steps.template.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr edit ${{ github.event.pull_request.number }} \
+            --title "$(tr -d '\n' < /tmp/pr_title.txt)" \
+            --body-file /tmp/pr_body.txt

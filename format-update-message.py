@@ -2,8 +2,8 @@
 """Turn a raw ansible-playbook run log into a short, scannable Telegram message.
 Usage: format-update-message.py <run_log_path> <exit_code> <hostname> <command>
 """
-import re
-import sys
+
+import re, sys
 from collections import OrderedDict
 
 run_log, rc, hostname, cmd = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]

@@ -16,3 +16,5 @@ ansible.cfg.bak
 # Staging area for the Proxmox regen pipeline (plaintext before vault-encrypt)
 playbooks/inventory/.staging/
 .claude
+.lh
+.venv

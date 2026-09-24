@@ -1,3 +1,4 @@
+name: ansible
 channels:
   - defaults
   - conda-forge

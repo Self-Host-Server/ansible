@@ -42,7 +42,7 @@ Concretely:
 - `playbooks/group_vars/all/vault.yml` — already `ansible-vault`
   encrypted; no change needed.
 - `playbooks/group_vars/all/vars.yml` — contains `proxmox_api_host:
-  <node1 LAN IP>` in plaintext. Must be `ansible-vault encrypt`ed in place
+<node1 LAN IP>` in plaintext. Must be `ansible-vault encrypt`ed in place
   before it is ever `git add`ed.
 - The inventory files (both the current `playbooks/inventory.yml` and,
   after migration, all three of `static.yml`, `overrides.yml`,
@@ -59,7 +59,7 @@ Concretely:
   via `.gitignore`.
 - **The automated regen pipeline never touches the vault password on
   node1.** node1 generates `containers-generated.yml` in plaintext and
-  pushes it to a *staging* path on ansible-host over SSH. A local step on
+  pushes it to a _staging_ path on ansible-host over SSH. A local step on
   ansible-host — which already holds `~/.vault_pass` — re-encrypts the
   staged file into the real, git-tracked
   `playbooks/inventory/containers-generated.yml` path. This keeps
@@ -107,7 +107,7 @@ between them — a watcher on node1 alone sees every container event
 cluster-wide, so only one node needs the unit.
 
 **Why a systemd path unit, not `pct hookscript`:** Proxmox's per-container
-hookscript only fires on start/stop of an *existing* container — it
+hookscript only fires on start/stop of an _existing_ container — it
 cannot fire on create (container doesn't exist yet when it would need to
 register) or destroy (container is already gone). A path unit watching
 the pmxcfs directory itself is the only way to catch create/delete
@@ -224,7 +224,7 @@ needed:
 6. Point `ansible.cfg`'s `inventory =` at the new directory.
 7. Run `ansible-inventory --list` against the new directory-based
    inventory and diff it against the old file's `ansible-inventory
-   --list` output. They must match exactly (aside from the source
+--list` output. They must match exactly (aside from the source
    restructure) before proceeding. (`ansible-inventory` transparently
    decrypts vault-encrypted files given `vault_password_file`, so this
    diff works the same whether the files are encrypted or not.)
@@ -262,7 +262,7 @@ not just a conversational promise.
    in `containers-generated.yml` on ansible-host within seconds. Modify
    its config, confirm regen fires again. Destroy it, confirm it
    disappears from the generated file and a stale-override warning does
-   *not* fire (since it won't be in `overrides.yml`).
+   _not_ fire (since it won't be in `overrides.yml`).
 3. **Full inventory diff.** After the migration (step 6 above),
    `ansible-inventory --list` must match pre-migration output exactly.
 4. **Low-risk playbook run.** Following the existing convention

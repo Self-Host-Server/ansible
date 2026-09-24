@@ -55,6 +55,7 @@ def test_build_inventory_duplicate_vmid_is_fatal():
 
 def test_render_yaml_is_sorted_and_valid():
     import yaml
+
     hosts = {
         "z": {"ansible_host": "10.0.0.9", "vmid": 1, "node": "node1"},
         "a": {"ansible_host": "10.0.0.1", "vmid": 2, "node": "node1"},
@@ -88,12 +89,14 @@ def test_validate_result_allows_first_run_with_no_history():
 
 def test_last_known_good_count_missing_cache(monkeypatch, tmp_path):
     import regen_inventory
+
     monkeypatch.setattr(regen_inventory, "CACHE_PATH", tmp_path / "missing.yml")
     assert regen_inventory.last_known_good_count() == 0
 
 
 def test_last_known_good_count_reads_cache(monkeypatch, tmp_path):
     import regen_inventory
+
     cache = tmp_path / "cache.yml"
     cache.write_text(render_yaml({"a": {"ansible_host": "10.0.0.1", "vmid": 1, "node": "node1"}}))
     monkeypatch.setattr(regen_inventory, "CACHE_PATH", cache)

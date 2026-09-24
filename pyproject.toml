@@ -136,10 +136,36 @@ commands = [
     "scripts/combined_imports_check.py",
     "--fix",
   ],
-  ["ruff", "format", "--no-cache", "--verbose", "."],
-  ["ruff", "check", "--no-cache", "--fix", "--verbose", "."],
-  ["npx", "prettier", "--write", "--log-level", "log", "{env:PRETTIER_GLOB}"],
-  ["npx", "@taplo/cli", "fmt", "--no-auto-config", "**/*.toml"],
+  [
+    "ruff",
+    "format",
+    "--no-cache",
+    "--verbose",
+    ".",
+  ],
+  [
+    "ruff",
+    "check",
+    "--no-cache",
+    "--fix",
+    "--verbose",
+    ".",
+  ],
+  [
+    "npx",
+    "prettier",
+    "--write",
+    "--log-level",
+    "log",
+    "{env:PRETTIER_GLOB}",
+  ],
+  [
+    "npx",
+    "@taplo/cli",
+    "fmt",
+    "--no-auto-config",
+    "**/*.toml",
+  ],
 ]
 
 # [tool.tox.env.scss]

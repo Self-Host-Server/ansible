@@ -16,3 +16,4 @@ update.log
 playbooks/inventory/.staging/
 .claude
 .lh
+.venv

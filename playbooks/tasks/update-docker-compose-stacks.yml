@@ -1,0 +1,44 @@
+- name: Ensure Python Docker/requests libraries are present
+  ansible.builtin.apt:
+    name:
+      - python3-requests
+      - python3-docker
+    state: present
+
+- name: Find docker compose files
+  ansible.builtin.find:
+    paths: /opt/docker-compose
+    patterns: "compose.yaml,compose.yml,docker-compose.yaml,docker-compose.yml"
+    recurse: true
+  register: compose_files
+  when: update_method | default('compose') == 'compose'
+
+- name: Check which compose directories are git repos
+  ansible.builtin.stat:
+    path: "{{ item }}/.git"
+  loop: "{{ compose_files.files | map(attribute='path') | map('dirname') | unique | list }}"
+  register: compose_git_check
+  when: update_method | default('compose') == 'compose'
+
+- name: Pull latest changes for git-managed compose directories
+  ansible.builtin.command:
+    cmd: git pull
+    chdir: "{{ item.item }}"
+  loop: "{{ compose_git_check.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - update_method | default('compose') == 'compose'
+    - item.stat.exists | default(false)
+  become: false
+  register: compose_git_pull
+  changed_when: "'Already up to date' not in compose_git_pull.stdout"
+
+- name: Pull new images and restart stacks
+  community.docker.docker_compose_v2:
+    project_src: "{{ item }}"
+    profiles: "{{ ['prod'] if '/prod/' in item else (['dev'] if '/dev/' in item else omit) }}"
+    pull: always
+    state: present
+  loop: "{{ compose_files.files | map(attribute='path') | map('dirname') | unique | list }}"
+  when: update_method | default('compose') == 'compose'

@@ -1,0 +1,8 @@
+[Unit]
+Description=Encrypt freshly-staged plaintext inventory and place it
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/nihar/ansible/playbooks/files/inventory-encrypt-on-receipt/encrypt_on_receipt.py
+User=nihar
+WorkingDirectory=/home/nihar/ansible

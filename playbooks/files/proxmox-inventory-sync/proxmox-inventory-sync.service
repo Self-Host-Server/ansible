@@ -1,0 +1,7 @@
+[Unit]
+Description=Regenerate and deliver Proxmox LXC inventory
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/proxmox-inventory-sync/regen_inventory.py
+User=root

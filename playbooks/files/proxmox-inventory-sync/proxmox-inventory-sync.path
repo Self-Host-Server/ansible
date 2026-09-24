@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch Proxmox LXC configs for changes
+
+[Path]
+PathModified=/etc/pve/nodes/node1/lxc
+PathModified=/etc/pve/nodes/node2/lxc
+Unit=proxmox-inventory-sync.service
+
+[Install]
+WantedBy=multi-user.target

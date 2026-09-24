@@ -15,3 +15,4 @@ update.log
 # Staging area for the Proxmox regen pipeline (plaintext before vault-encrypt)
 playbooks/inventory/.staging/
 .claude
+.lh

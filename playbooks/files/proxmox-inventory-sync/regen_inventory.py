@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Regenerate containers-generated.yml from live Proxmox state and deliver it to ansible-host.
 Runs as root on node1, triggered by proxmox-inventory-sync.path (or manually for the first run)."""
-import json, os, subprocess, sys, tempfile; from pathlib import Path
+
+import json, os, subprocess, sys, tempfile
+from pathlib import Path
 import yaml
 
 CACHE_PATH = Path("/var/lib/proxmox-inventory-sync/last-known-good.yml")
@@ -51,8 +53,7 @@ def validate_result(new_count, last_known_good_count):
         raise ValueError(f"regen produced 0 hosts but last known-good had {last_known_good_count} — refusing to overwrite")
     if last_known_good_count >= 5 and new_count < last_known_good_count / 2:
         raise ValueError(
-            f"regen produced {new_count} hosts, less than half of last known-good's {last_known_good_count} — "
-            "refusing to overwrite, looks like a partial API response"
+            f"regen produced {new_count} hosts, less than half of last known-good's {last_known_good_count} — refusing to overwrite, looks like a partial API response"
         )
 
 
@@ -60,7 +61,9 @@ def fetch_container_net0(node, vmid):
     """Fetch one container's net0 string from its per-container config (cluster/resources doesn't include it)."""
     out = subprocess.run(
         ["pvesh", "get", f"/nodes/{node}/lxc/{vmid}/config", "--output-format", "json"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return json.loads(out.stdout).get("net0")
 
@@ -70,7 +73,9 @@ def fetch_raw_containers():
     each enriched with net0 from its own config (the cluster-wide resource list omits it)."""
     out = subprocess.run(
         ["pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     resources = json.loads(out.stdout)
     lxcs = [r for r in resources if r.get("type") == "lxc"]
@@ -103,9 +108,10 @@ def deliver(text):
     os.close(fd)
     try:
         subprocess.run(
-            ["scp", "-i", REMOTE_KEY, "-o", "BatchMode=yes", tmp,
-             f"{REMOTE_USER}@{ANSIBLE_HOST}:containers-generated.yml.plain"],
-            check=True, capture_output=True, text=True,
+            ["scp", "-i", REMOTE_KEY, "-o", "BatchMode=yes", tmp, f"{REMOTE_USER}@{ANSIBLE_HOST}:containers-generated.yml.plain"],
+            check=True,
+            capture_output=True,
+            text=True,
         )
     finally:
         os.unlink(tmp)
@@ -120,8 +126,7 @@ def notify(text):
     if not token or not chat_id:
         return
     subprocess.run(
-        ["curl", "-s", "-X", "POST", f"https://api.telegram.org/bot{token}/sendMessage",
-         "--data-urlencode", f"chat_id={chat_id}", "--data-urlencode", f"text={text}"],
+        ["curl", "-s", "-X", "POST", f"https://api.telegram.org/bot{token}/sendMessage", "--data-urlencode", f"chat_id={chat_id}", "--data-urlencode", f"text={text}"],
         capture_output=True,
     )
 

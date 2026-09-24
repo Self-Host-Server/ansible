@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Encrypt a freshly-staged plaintext inventory file in place and delete the plaintext.
 Runs as nihar on ansible-host, triggered by inventory-encrypt-on-receipt.path."""
-import os, subprocess, sys, tempfile; from pathlib import Path
+
+import os, subprocess, sys, tempfile
+from pathlib import Path
 import yaml
 
 REPO = Path("/home/nihar/ansible")
@@ -19,8 +21,11 @@ def generated_hosts(staged_text):
 def overrides_hosts():
     """Host names hand-listed in overrides.yml, decrypted via the vault password already on this host."""
     out = subprocess.run(
-        ["ansible-vault", "view", str(OVERRIDES)], cwd=REPO,
-        capture_output=True, text=True, check=True,
+        ["ansible-vault", "view", str(OVERRIDES)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     data = yaml.safe_load(out.stdout) or {}
     return set(data.get("containers", {}).get("hosts", {}).keys())
@@ -38,7 +43,10 @@ def encrypt_into_place(staged_path):
     try:
         subprocess.run(
             ["ansible-vault", "encrypt", "--output", tmp, str(staged_path)],
-            cwd=REPO, check=True, capture_output=True, text=True,
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+            text=True,
         )
         os.replace(tmp, FINAL)
     except Exception:

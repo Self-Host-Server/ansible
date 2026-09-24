@@ -1,0 +1,26 @@
+name: Cascade Merge
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  cascade:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+
+      - name: Cascade merge into all branches
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
+        run: python3 .github/scripts/cascade_merge.py

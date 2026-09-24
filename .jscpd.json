@@ -5,6 +5,8 @@
     "**/node_modules/**",
     "**/.git/**",
     "**/.tox/**",
-    "**/package-lock.json"
+    "**/package-lock.json",
+    "docs/superpowers/plans/**",
+    "docs/superpowers/specs/**"
   ]
 }

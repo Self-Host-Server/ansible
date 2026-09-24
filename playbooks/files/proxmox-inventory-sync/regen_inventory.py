@@ -107,7 +107,7 @@ def deliver(text):
     os.close(fd)
     try:
         subprocess.run(
-            ["scp", "-i", REMOTE_KEY, "-o", "BatchMode=yes", tmp, f"{REMOTE_USER}@{ANSIBLE_HOST}:containers-generated.yml.plain"],
+            ["scp", "-O", "-i", REMOTE_KEY, "-o", "BatchMode=yes", tmp, f"{REMOTE_USER}@{ANSIBLE_HOST}:containers-generated.yml.plain"],
             check=True,
             capture_output=True,
             text=True,

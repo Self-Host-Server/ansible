@@ -4,84 +4,8 @@
   gather_facts: true
 
   tasks:
-    - name: Update and upgrade apt packages
-      ansible.builtin.apt:
-        update_cache: true
-        upgrade: dist
-        autoremove: true
-        autoclean: true
+    - ansible.builtin.import_tasks: tasks/apt-update-and-reboot.yml
 
-    # Reboot BEFORE touching docker/GPU-dependent stacks, not after: if apt
-    # just upgraded a kernel or the NVIDIA driver, the running kernel module
-    # is stale relative to the new userspace libraries until reboot, and any
-    # GPU-dependent container (e.g. ollama) fails to start with "could not
-    # select device driver nvidia" until that's resolved.
-    - name: Check if reboot is required
-      ansible.builtin.stat:
-        path: /var/run/reboot-required
-      register: reboot_flag
+    - ansible.builtin.import_tasks: tasks/update-docker-compose-stacks.yml
 
-    - name: Reboot if required
-      ansible.builtin.reboot:
-        msg: "Rebooting due to package updates (Ansible)"
-        reboot_timeout: 300
-        pre_reboot_delay: 5
-        post_reboot_delay: 30
-      when:
-        - reboot_flag.stat.exists
-        - auto_reboot | default(false) | bool
-
-    - name: Report reboot needed (manual)
-      ansible.builtin.debug:
-        msg: "{{ inventory_hostname }} needs a reboot — auto_reboot not enabled for this host"
-      when:
-        - reboot_flag.stat.exists
-        - not (auto_reboot | default(false) | bool)
-
-    - name: Ensure Python Docker/requests libraries are present
-      ansible.builtin.apt:
-        name:
-          - python3-requests
-          - python3-docker
-        state: present
-
-    - name: Find docker compose files
-      ansible.builtin.find:
-        paths: /opt/docker-compose
-        patterns: "compose.yaml,compose.yml,docker-compose.yaml,docker-compose.yml"
-        recurse: true
-      register: compose_files
-      ignore_errors: true
-
-    - name: Check which compose directories are git repos
-      ansible.builtin.stat:
-        path: "{{ item }}/.git"
-      loop: "{{ compose_files.files | default([]) | map(attribute='path') | map('dirname') | unique | list }}"
-      register: compose_git_check
-      when: compose_files.files is defined
-
-    - name: Pull latest changes for git-managed compose directories
-      ansible.builtin.command:
-        cmd: git pull
-        chdir: "{{ item.item }}"
-      loop: "{{ compose_git_check.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item }}"
-      when:
-        - compose_files.files is defined
-        - item.stat.exists | default(false)
-      become: false
-      register: compose_git_pull
-      changed_when: "'Already up to date' not in compose_git_pull.stdout"
-
-    - name: Pull new images and restart stacks
-      community.docker.docker_compose_v2:
-        project_src: "{{ item }}"
-        pull: always
-        state: present
-      loop: "{{ compose_files.files | default([]) | map(attribute='path') | map('dirname') | unique | list }}"
-      when: compose_files.files is defined
-
-    - name: Prune dangling images
-      community.docker.docker_prune:
-        images: true
+    - ansible.builtin.import_tasks: tasks/prune-docker-images.yml

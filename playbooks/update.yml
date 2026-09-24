@@ -71,96 +71,9 @@
             mode: "0644"
           delegate_to: localhost
 
-    - name: Update and upgrade apt packages
-      ansible.builtin.apt:
-        update_cache: true
-        upgrade: dist
-        autoremove: true
-        autoclean: true
+    - ansible.builtin.import_tasks: tasks/apt-update-and-reboot.yml
 
-    # Reboot BEFORE touching docker/GPU-dependent stacks, not after: if apt
-    # just upgraded a kernel or GPU driver, the running kernel module is
-    # stale relative to the new userspace libraries until reboot, and any
-    # GPU-dependent container fails to start (e.g. "could not select device
-    # driver nvidia") until that's resolved. Confirmed via a real failure on
-    # the gaming laptop's ollama stack after the old order upgraded its
-    # NVIDIA driver mid-run.
-    - name: Check if reboot is required
-      ansible.builtin.stat:
-        path: /var/run/reboot-required
-      register: reboot_flag
-
-    - name: Reboot if required
-      ansible.builtin.reboot:
-        msg: "Rebooting due to package updates (Ansible)"
-        reboot_timeout: 300
-        pre_reboot_delay: 5
-        post_reboot_delay: 30
-      when:
-        - reboot_flag.stat.exists
-        - auto_reboot | default(false) | bool
-        - ansible_connection != 'local'
-
-    - name: Schedule self-reboot (detached)
-      ansible.builtin.shell: sleep 5 && shutdown -r now
-      async: 1
-      poll: 0
-      when:
-        - reboot_flag.stat.exists
-        - auto_reboot | default(false) | bool
-        - ansible_connection == 'local'
-
-    - name: Report reboot needed (manual)
-      ansible.builtin.debug:
-        msg: "{{ inventory_hostname }} needs a reboot — auto_reboot not enabled for this host"
-      when:
-        - reboot_flag.stat.exists
-        - not (auto_reboot | default(false) | bool) or ansible_connection == 'local'
-
-    - name: Ensure Python Docker/requests libraries are present
-      ansible.builtin.apt:
-        name:
-          - python3-requests
-          - python3-docker
-        state: present
-
-    - name: Find docker compose files
-      ansible.builtin.find:
-        paths: /opt/docker-compose
-        patterns: "compose.yaml,compose.yml,docker-compose.yaml,docker-compose.yml"
-        recurse: true
-      register: compose_files
-      when: update_method | default('compose') == 'compose'
-
-    - name: Check which compose directories are git repos
-      ansible.builtin.stat:
-        path: "{{ item }}/.git"
-      loop: "{{ compose_files.files | map(attribute='path') | map('dirname') | unique | list }}"
-      register: compose_git_check
-      when: update_method | default('compose') == 'compose'
-
-    - name: Pull latest changes for git-managed compose directories
-      ansible.builtin.command:
-        cmd: git pull
-        chdir: "{{ item.item }}"
-      loop: "{{ compose_git_check.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item }}"
-      when:
-        - update_method | default('compose') == 'compose'
-        - item.stat.exists | default(false)
-      become: false
-      register: compose_git_pull
-      changed_when: "'Already up to date' not in compose_git_pull.stdout"
-
-    - name: Pull new images and restart stacks
-      community.docker.docker_compose_v2:
-        project_src: "{{ item }}"
-        profiles: "{{ ['prod'] if '/prod/' in item else (['dev'] if '/dev/' in item else omit) }}"
-        pull: always
-        state: present
-      loop: "{{ compose_files.files | map(attribute='path') | map('dirname') | unique | list }}"
-      when: update_method | default('compose') == 'compose'
+    - ansible.builtin.import_tasks: tasks/update-docker-compose-stacks.yml
 
     - name: Run make update
       ansible.builtin.command:
@@ -170,10 +83,4 @@
       when: update_method | default('compose') == 'makefile'
       changed_when: true
 
-    - name: Prune dangling images
-      community.docker.docker_prune:
-        images: true
-      register: prune_result
-      retries: 3
-      delay: 15
-      until: prune_result is succeeded
+    - ansible.builtin.import_tasks: tasks/prune-docker-images.yml

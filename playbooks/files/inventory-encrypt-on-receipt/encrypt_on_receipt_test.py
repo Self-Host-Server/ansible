@@ -2,11 +2,7 @@ from encrypt_on_receipt import generated_hosts, stale_overrides
 
 
 def test_generated_hosts_parses_yaml():
-    text = (
-        "containers:\n  hosts:\n"
-        "    a: {ansible_host: 10.0.0.1, vmid: 100, node: node1}\n"
-        "    b: {ansible_host: 10.0.0.2, vmid: 101, node: node1}\n"
-    )
+    text = "containers:\n  hosts:\n    a: {ansible_host: 10.0.0.1, vmid: 100, node: node1}\n    b: {ansible_host: 10.0.0.2, vmid: 101, node: node1}\n"
     assert generated_hosts(text) == {"a", "b"}
 
 

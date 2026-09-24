@@ -160,10 +160,6 @@ def main():
 
     run_check(["git", "config", "user.name", "github-actions[bot]"])
     run_check(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
-    # persist-credentials: false on the checkout step means origin has no
-    # authenticated credential attached, so fetching a private repo needs its
-    # own auth here too (same token this file already embeds in push_url below).
-    run_check(["git", "remote", "set-url", "origin", f"https://x-access-token:{token}@github.com/{repo}.git"])
     run_check(["git", "fetch", "--all", "--prune"])
 
     raw = run(["git", "branch", "-r", "--format=%(refname:short)"]).stdout.splitlines()

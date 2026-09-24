@@ -2,9 +2,8 @@
 """Encrypt a freshly-staged plaintext inventory file in place and delete the plaintext.
 Runs as nihar on ansible-host, triggered by inventory-encrypt-on-receipt.path."""
 
-import os, subprocess, sys, tempfile
+import os, subprocess, sys, tempfile, yaml
 from pathlib import Path
-import yaml
 
 REPO = Path("/home/nihar/ansible")
 STAGED = REPO / "playbooks/inventory/.staging/containers-generated.yml.plain"

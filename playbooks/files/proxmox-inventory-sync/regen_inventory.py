@@ -2,9 +2,8 @@
 """Regenerate containers-generated.yml from live Proxmox state and deliver it to ansible-host.
 Runs as root on node1, triggered by proxmox-inventory-sync.path (or manually for the first run)."""
 
-import json, os, subprocess, sys, tempfile
+import json, os, subprocess, sys, tempfile, yaml
 from pathlib import Path
-import yaml
 
 CACHE_PATH = Path("/var/lib/proxmox-inventory-sync/last-known-good.yml")
 TELEGRAM_ENV_PATH = Path("/etc/proxmox-inventory-sync/telegram.env")

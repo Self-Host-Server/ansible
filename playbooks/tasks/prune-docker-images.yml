@@ -5,3 +5,4 @@
   retries: 3
   delay: 15
   until: prune_result is succeeded
+  when: inventory_hostname != 'github-runners'

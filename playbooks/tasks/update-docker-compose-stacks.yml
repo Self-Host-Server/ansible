@@ -11,14 +11,18 @@
     patterns: "compose.yaml,compose.yml,docker-compose.yaml,docker-compose.yml"
     recurse: true
   register: compose_files
-  when: update_method | default('compose') == 'compose'
+  when:
+    - update_method | default('compose') == 'compose'
+    - inventory_hostname != 'github-runners'
 
 - name: Check which compose directories are git repos
   ansible.builtin.stat:
     path: "{{ item }}/.git"
   loop: "{{ compose_files.files | map(attribute='path') | map('dirname') | unique | list }}"
   register: compose_git_check
-  when: update_method | default('compose') == 'compose'
+  when:
+    - update_method | default('compose') == 'compose'
+    - inventory_hostname != 'github-runners'
 
 - name: Pull latest changes for git-managed compose directories
   ansible.builtin.command:
@@ -30,6 +34,7 @@
   when:
     - update_method | default('compose') == 'compose'
     - item.stat.exists | default(false)
+    - inventory_hostname != 'github-runners'
   become: false
   register: compose_git_pull
   changed_when: "'Already up to date' not in compose_git_pull.stdout"
@@ -41,4 +46,6 @@
     pull: always
     state: present
   loop: "{{ compose_files.files | map(attribute='path') | map('dirname') | unique | list }}"
-  when: update_method | default('compose') == 'compose'
+  when:
+    - update_method | default('compose') == 'compose'
+    - inventory_hostname != 'github-runners'

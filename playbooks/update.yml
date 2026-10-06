@@ -39,7 +39,7 @@
             snap_name: "snapshot_{{ snap_index_raw.content | b64decode | trim | int }}"
 
         - name: Remove old snapshot in this slot (if present)
-          community.general.proxmox_snap:
+          community.proxmox.proxmox_snap:
             api_host: "{{ proxmox_api_host }}"
             api_user: "{{ proxmox_api_user }}"
             api_token_id: "{{ proxmox_token_id }}"
@@ -49,10 +49,11 @@
             state: absent
             force: true
             timeout: 300
+            validate_certs: false
           delegate_to: localhost
 
         - name: Create snapshot
-          community.general.proxmox_snap:
+          community.proxmox.proxmox_snap:
             api_host: "{{ proxmox_api_host }}"
             api_user: "{{ proxmox_api_user }}"
             api_token_id: "{{ proxmox_token_id }}"
@@ -62,6 +63,7 @@
             description: "Before update on {{ snapshot_date }}"
             state: present
             timeout: 300
+            validate_certs: false
           delegate_to: localhost
 
         - name: Advance snapshot index

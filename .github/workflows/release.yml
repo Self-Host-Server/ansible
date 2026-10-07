@@ -76,22 +76,20 @@ jobs:
           # tag when there is one, otherwise a short SHA (never the raw 40-char hash).
           echo "prev=${LATEST_TAG:-$(git rev-parse --short "$BASE_SHA")}" >> "$GITHUB_OUTPUT"
 
+      - name: Install git-cliff
+        id: install-cliff
+        if: steps.version.outputs.skip == 'false'
+        uses: ./.github/actions/install-git-cliff
+
       - name: Generate changelog from commits
         if: steps.version.outputs.skip == 'false'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          CLIFF: ${{ steps.install-cliff.outputs.cliff-path }}
           STEPS_VERSION_OUTPUTS_BASE: ${{ steps.version.outputs.base }}
           STEPS_VERSION_OUTPUTS_PREV: ${{ steps.version.outputs.prev }}
           STEPS_VERSION_OUTPUTS_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          CLIFF_VER=$(curl -sf "https://api.github.com/repos/orhun/git-cliff/releases/latest" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
-          curl -fsSL \
-            "https://github.com/orhun/git-cliff/releases/download/v${CLIFF_VER}/git-cliff-${CLIFF_VER}-x86_64-unknown-linux-musl.tar.gz" \
-            | tar -xz -C /tmp
-          CLIFF=$(find /tmp -name "git-cliff" -type f | head -1)
-          chmod +x "$CLIFF"
-
           # git-cliff splits the range into a separate chunk at every merge commit
           # (cascade-merge syncs create one on nearly every dev/main push), which
           # produces duplicate category headers if rendered via its own Jinja body

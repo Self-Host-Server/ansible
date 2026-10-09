@@ -113,8 +113,7 @@
         user: nihar
         key: "{{ hostvars['node1'].node1_sync_pubkey }}"
         key_options: >-
-          command="/home/nihar/ansible/playbooks/files/proxmox-inventory-sync/receive_staged.sh",
-          no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
+          command="/home/nihar/ansible/playbooks/files/proxmox-inventory-sync/receive_staged.sh",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
 
     - name: Deploy the systemd path unit
       ansible.builtin.copy:

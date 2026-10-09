@@ -1,0 +1,10 @@
+- name: Prune dangling images
+  community.docker.docker_prune:
+    images: true
+  register: prune_result
+  retries: 3
+  delay: 15
+  until: prune_result is succeeded
+  when:
+    - inventory_hostname != 'github-runners'
+    - inventory_hostname != 'jarvis'

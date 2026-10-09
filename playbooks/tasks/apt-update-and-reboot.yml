@@ -1,0 +1,45 @@
+- name: Update and upgrade apt packages
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+    autoremove: true
+    autoclean: true
+
+# Reboot BEFORE touching docker/GPU-dependent stacks, not after: if apt
+# just upgraded a kernel or GPU driver, the running kernel module is
+# stale relative to the new userspace libraries until reboot, and any
+# GPU-dependent container fails to start (e.g. "could not select device
+# driver nvidia") until that's resolved. Confirmed via a real failure on
+# the gaming laptop's ollama stack after the old order upgraded its
+# NVIDIA driver mid-run.
+- name: Check if reboot is required
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: reboot_flag
+
+- name: Reboot if required
+  ansible.builtin.reboot:
+    msg: "Rebooting due to package updates (Ansible)"
+    reboot_timeout: 300
+    pre_reboot_delay: 5
+    post_reboot_delay: 30
+  when:
+    - reboot_flag.stat.exists
+    - auto_reboot | default(false) | bool
+    - ansible_connection != 'local'
+
+- name: Schedule self-reboot (detached)
+  ansible.builtin.shell: sleep 5 && shutdown -r now
+  async: 1
+  poll: 0
+  when:
+    - reboot_flag.stat.exists
+    - auto_reboot | default(false) | bool
+    - ansible_connection == 'local'
+
+- name: Report reboot needed (manual)
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} needs a reboot — auto_reboot not enabled for this host"
+  when:
+    - reboot_flag.stat.exists
+    - not (auto_reboot | default(false) | bool) or ansible_connection == 'local'

@@ -277,7 +277,7 @@ jobs:
       - name: Install git-cliff
         id: install-cliff-1
         continue-on-error: true
-        uses: ./.github/actions/install-git-cliff
+        uses: $/.github/actions/install-git-cliff
 
       - name: "[1] git-cliff"
         id: gitcliff

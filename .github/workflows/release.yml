@@ -79,7 +79,7 @@ jobs:
       - name: Install git-cliff
         id: install-cliff
         if: steps.version.outputs.skip == 'false'
-        uses: ./.github/actions/install-git-cliff
+        uses: $/.github/actions/install-git-cliff
 
       - name: Generate changelog from commits
         if: steps.version.outputs.skip == 'false'
